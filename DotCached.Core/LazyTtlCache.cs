@@ -1,10 +1,11 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Threading;
+using System.Threading.Tasks;
 
 namespace DotCached.Core
 {
     public class LazyTtlCache<TKey, TValue>
-        where TKey : class
         where TValue : class
     {
         private readonly ConcurrentDictionary<TKey, ExpiringValue<TValue>> _cache = 
@@ -19,27 +20,43 @@ namespace DotCached.Core
             _valueFactory = valueFactory;
         }
 
-        public TValue GetOrNull(TKey key)
+        public async Task<TValue> GetOrNull(TKey key)
         {
-//            if (!_cache.TryGetValue(key, out var existingValue))
-//            {
-                return _valueFactory.Get(key);
-//            }
+            var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue<TValue>(null, DateTimeOffset.MinValue));
+            if (expiringValue.Expiration > DateTimeOffset.Now) return expiringValue.Value;
+            
+            await expiringValue.WriterSemaphore.WaitAsync();
+            try
+            {
+                if (_cache[key].Expiration <= DateTimeOffset.Now)
+                {
+                    Set(key, await _valueFactory.Get(key));
+                }
+            }
+            finally
+            {
+                expiringValue.WriterSemaphore.Release();
+            }
+
+            return _cache[key].Value;
         }
+        
         public void Set(TKey key, TValue value)
         {
             var expiringValue = new ExpiringValue<TValue>(value, DateTimeOffset.UtcNow + Ttl);
             _cache.AddOrUpdate(key, expiringValue, (_, __) => expiringValue);
         }
 
-        public TValue this[TKey key]
+        internal class CacheValue
         {
-            get { return this.GetOrNull(key); }
-            set { this.Set(key, value); }
-
+            public CacheValue()
+            {
+                WriterSemaphore = new SemaphoreSlim(1,1);
+            }
+            public SemaphoreSlim WriterSemaphore { get; private set; }
         }
-
-        internal class ExpiringValue<TValue>
+        
+        internal class ExpiringValue<TValue> : CacheValue
         {
             public ExpiringValue(TValue value, DateTimeOffset expiration)
             {

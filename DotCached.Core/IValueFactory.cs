@@ -1,7 +1,9 @@
-﻿namespace DotCached.Core
+﻿using System.Threading.Tasks;
+
+namespace DotCached.Core
 {
     public interface IValueFactory<TKey, TValue>
     {
-        TValue Get(TKey key);
+        Task<TValue> Get(TKey key);
     }
 }

@@ -1,4 +1,9 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.ComponentModel.DataAnnotations;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using FluentAssertions;
 using Moq;
 using Xunit;
@@ -8,41 +13,99 @@ namespace DotCached.Core.UnitTests
     public class LazyTtlCacheTests
     {
         private readonly Mock<IValueFactory<string, string>> _dummyValueFactory;
-        private const string DummyKey = "1";
+        private const string DummyKey = "DummyKey";
 
         public LazyTtlCacheTests()
         {
             var dummyValueFactory = new Mock<IValueFactory<string, string>>();
-            dummyValueFactory.Setup(x => x.Get(DummyKey)).Returns(DummyKey);
+            dummyValueFactory.Setup(x => x.Get(DummyKey)).ReturnsAsync(DummyKey);
             _dummyValueFactory = dummyValueFactory;
         }
 
         [Fact]
-        public void WhenRequestingItem_WhichIsNotPresent_ItShouldBeCreatedAndReturned()
-        {
-            var cache = new LazyTtlCache<string, string>(TimeSpan.MaxValue, _dummyValueFactory.Object);
-
-            cache.GetOrNull(DummyKey).Should().Be(DummyKey);
-            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
-            
-        }
-        
-        [Fact]
-        public void SquareBrackets_ShouldReturnSameInstanceAs_GetOrNull()
-        {
-            var cache = new LazyTtlCache<string, string>(TimeSpan.MaxValue, _dummyValueFactory.Object);
-
-            cache.GetOrNull(DummyKey).Should().BeSameAs(cache[DummyKey]);
-        }
-        
-        [Fact]
-        public void WhenItemHasExpired_NewValueShouldBeCreated_AndReturned()
+        public async Task GetOrNull_KeyNotPresentInCache_ValueFactoryGetsCalled()
         {
             var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
 
-            cache.GetOrNull(DummyKey).Should().Be(DummyKey);
+            var result = await cache.GetOrNull(DummyKey);
+            result.Should().Be(DummyKey);
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
             
+        }
+        
+        [Fact]
+        public async Task GetOrNull_ValueHasExpired_NewValueIsCreated()
+        {
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
+
+            var result = await cache.GetOrNull(DummyKey);
+            result.Should().Be(DummyKey);
+            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
+        }
+
+        [Theory]
+        [InlineData(1)]
+        [InlineData(5)]
+        [InlineData(20)]
+        [InlineData(100)]
+        public void GetOrNull_MultipleThreads_ValueFactoryIsCalledExatlyOnce(int threadCount)
+        {
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
+
+            var resetEvent = new ManualResetEventSlim();
+
+            var threads = Enumerable.Range(0, threadCount).Select(i =>
+            {
+                var t = new Thread(() =>
+                {
+                    resetEvent.Wait();
+                    cache.GetOrNull(DummyKey);
+                }) {Name = $"Test Thread No. {i}"};
+                t.Start();
+                return t;
+            });
+            
+            resetEvent.Set();
+            foreach (var thread in threads)
+                thread.Join();
+            
+            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
+        }
+        
+        [Theory]
+        [InlineData(1)]
+        [InlineData(5)]
+        [InlineData(20)]
+        [InlineData(100)]
+        public void GetOrNull_MultipleThreadsAndValueDoesNotExist_AllThreadsReturnRefreshedValue(int threadCount)
+        {
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
+            var value = Guid.NewGuid().ToString();
+            _dummyValueFactory
+                .Setup(x => x.Get(DummyKey))
+                .ReturnsAsync(value);
+
+            var resetEvent = new ManualResetEventSlim();
+            var results = new ConcurrentBag<string>();
+
+            var threads = Enumerable.Range(0, threadCount).Select(i =>
+            {
+                var t = new Thread(() =>
+                {
+                    resetEvent.Wait();
+                    
+                    results.Add(cache.GetOrNull(DummyKey).Result);
+                }) {Name = $"Test Thread No. {i}"};
+                t.Start();
+                return t;
+            });
+            
+            resetEvent.Set();
+            foreach (var thread in threads)
+                thread.Join();
+
+            results.Count().Should().Be(threadCount);
+            results.Distinct().Should().BeEquivalentTo(value);
         }
     }
 }
