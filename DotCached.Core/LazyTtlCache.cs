@@ -23,8 +23,11 @@ namespace DotCached.Core
         public async Task<TValue> GetOrNull(TKey key)
         {
             var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue<TValue>(null, DateTimeOffset.MinValue));
-            if (expiringValue.Expiration > DateTimeOffset.Now) return expiringValue.Value;
-            
+            if (expiringValue.Expiration > DateTimeOffset.Now)
+            {
+                return expiringValue.Value;
+            }
+
             await expiringValue.WriterSemaphore.WaitAsync();
             try
             {

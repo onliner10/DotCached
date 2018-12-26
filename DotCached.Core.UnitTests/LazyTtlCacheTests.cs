@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Threading;
@@ -43,11 +44,10 @@ namespace DotCached.Core.UnitTests
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
         }
 
+        public static IEnumerable<object[]> ThreadCounts => Enumerable.Range(1, 30).Cast<object>().Select(x=> new[] {x});
+       
         [Theory]
-        [InlineData(1)]
-        [InlineData(5)]
-        [InlineData(20)]
-        [InlineData(100)]
+        [MemberData(nameof(ThreadCounts))]
         public void GetOrNull_MultipleThreads_ValueFactoryIsCalledExatlyOnce(int threadCount)
         {
             var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
@@ -59,11 +59,11 @@ namespace DotCached.Core.UnitTests
                 var t = new Thread(() =>
                 {
                     resetEvent.Wait();
-                    cache.GetOrNull(DummyKey);
+                    var val = cache.GetOrNull(DummyKey).Result;
                 }) {Name = $"Test Thread No. {i}"};
                 t.Start();
                 return t;
-            });
+            }).ToList();
             
             resetEvent.Set();
             foreach (var thread in threads)
@@ -73,10 +73,7 @@ namespace DotCached.Core.UnitTests
         }
         
         [Theory]
-        [InlineData(1)]
-        [InlineData(5)]
-        [InlineData(20)]
-        [InlineData(100)]
+        [MemberData(nameof(ThreadCounts))]
         public void GetOrNull_MultipleThreadsAndValueDoesNotExist_AllThreadsReturnRefreshedValue(int threadCount)
         {
             var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
@@ -93,16 +90,17 @@ namespace DotCached.Core.UnitTests
                 var t = new Thread(() =>
                 {
                     resetEvent.Wait();
-                    
                     results.Add(cache.GetOrNull(DummyKey).Result);
                 }) {Name = $"Test Thread No. {i}"};
                 t.Start();
                 return t;
-            });
+            }).ToList();
             
             resetEvent.Set();
             foreach (var thread in threads)
+            {
                 thread.Join();
+            }
 
             results.Count().Should().Be(threadCount);
             results.Distinct().Should().BeEquivalentTo(value);
