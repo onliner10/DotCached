@@ -1,11 +1,13 @@
 ﻿using System;
 using System.Collections.Concurrent;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using DotCached.Core.Infrastructure;
 
+[assembly: InternalsVisibleTo("DotCached.Core.UnitTests")]
 namespace DotCached.Core
 {
-    
     public class LazyTtlCache<TKey, TValue>
         where TValue : class
     {
@@ -13,23 +15,30 @@ namespace DotCached.Core
             new ConcurrentDictionary<TKey, ExpiringValue>();
 
         private readonly IValueFactory<TKey, TValue> _valueFactory;
+        private readonly TimeProvider _timeProvider;
         public readonly TimeSpan Ttl;
 
         public LazyTtlCache(TimeSpan ttl, IValueFactory<TKey, TValue> valueFactory)
+        :this(ttl, valueFactory, TimeProviders.Default)
+        {
+        }
+
+        internal LazyTtlCache(TimeSpan ttl, IValueFactory<TKey, TValue> valueFactory, TimeProvider timeProvider)
         {
             Ttl = ttl;
             _valueFactory = valueFactory;
+            _timeProvider = timeProvider;
         }
-
+        
         public async Task<TValue> GetOrNull(TKey key)
         {
             var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue(null, DateTimeOffset.MinValue));
-            if (expiringValue.Expiration > DateTimeOffset.Now) return expiringValue.Value;
+            if (expiringValue.Expiration > _timeProvider()) return expiringValue.Value;
 
             await expiringValue.WriterSemaphore.WaitAsync();
             try
             {
-                if (_cache[key].Expiration <= DateTimeOffset.Now)
+                if (_cache[key].Expiration <= _timeProvider())
                 {
                     Set(key, await _valueFactory.Get(key));
                 }
@@ -37,6 +46,7 @@ namespace DotCached.Core
             catch (Exception ex)
             {
                 //TODO: parametrize this strategy    
+                Set(key, null);
             }
             finally
             {
@@ -48,7 +58,7 @@ namespace DotCached.Core
 
         public void Set(TKey key, TValue value)
         {
-            var expiringValue = new ExpiringValue(value, DateTimeOffset.UtcNow + Ttl);
+            var expiringValue = new ExpiringValue(value, _timeProvider() + Ttl);
             _cache.AddOrUpdate(key, expiringValue, (_, __) => expiringValue);
         }
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using DotCached.Core.Infrastructure;
 using FluentAssertions;
 using Moq;
 using Xunit;
@@ -53,13 +54,38 @@ namespace DotCached.Core.UnitTests
 
         [Theory]
         [MemberData(nameof(ThreadCounts))]
-        public void GetOrNull_ValueFactoryThrowsException_AllThreadsReturnNull(int threadCount)
+        public void GetOrNull_ValueFactoryThrowsException_AllThreadsReturnNull_1(int threadCount)
         {
             var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
             _dummyValueFactory
                 .Setup(x => x.Get(DummyKey))
                 .ThrowsAsync(new Exception());
 
+            var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
+
+            results.Count().Should().Be(threadCount);
+            results.Distinct().Should().BeEquivalentTo(new string[] { null });
+        }
+        
+        [Theory]
+        [MemberData(nameof(ThreadCounts))]
+        public void GetOrNull_ValueFactoryThrowsException_AllThreadsReturnNull_2(int threadCount)
+        {
+            var callCounter = 0;
+            DateTimeOffset DummyProvider()
+            {
+                var res = DateTimeOffset.UnixEpoch.Add(callCounter * TimeSpan.FromMinutes(1));
+                Interlocked.Increment(ref callCounter);
+                return res;
+            }
+
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object, DummyProvider);
+            _dummyValueFactory
+                .SetupSequence(x => x.Get(DummyKey))
+                .ReturnsAsync(DummyKey)
+                .ThrowsAsync(new Exception()) ;
+            
+            StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
             var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
