@@ -5,11 +5,12 @@ using System.Threading.Tasks;
 
 namespace DotCached.Core
 {
+    
     public class LazyTtlCache<TKey, TValue>
         where TValue : class
     {
-        private readonly ConcurrentDictionary<TKey, ExpiringValue<TValue>> _cache = 
-            new ConcurrentDictionary<TKey, ExpiringValue<TValue>>();
+        private readonly ConcurrentDictionary<TKey, ExpiringValue> _cache =
+            new ConcurrentDictionary<TKey, ExpiringValue>();
 
         private readonly IValueFactory<TKey, TValue> _valueFactory;
         public readonly TimeSpan Ttl;
@@ -22,11 +23,8 @@ namespace DotCached.Core
 
         public async Task<TValue> GetOrNull(TKey key)
         {
-            var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue<TValue>(null, DateTimeOffset.MinValue));
-            if (expiringValue.Expiration > DateTimeOffset.Now)
-            {
-                return expiringValue.Value;
-            }
+            var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue(null, DateTimeOffset.MinValue));
+            if (expiringValue.Expiration > DateTimeOffset.Now) return expiringValue.Value;
 
             await expiringValue.WriterSemaphore.WaitAsync();
             try
@@ -36,6 +34,10 @@ namespace DotCached.Core
                     Set(key, await _valueFactory.Get(key));
                 }
             }
+            catch (Exception ex)
+            {
+                //TODO: parametrize this strategy    
+            }
             finally
             {
                 expiringValue.WriterSemaphore.Release();
@@ -43,10 +45,10 @@ namespace DotCached.Core
 
             return _cache[key].Value;
         }
-        
+
         public void Set(TKey key, TValue value)
         {
-            var expiringValue = new ExpiringValue<TValue>(value, DateTimeOffset.UtcNow + Ttl);
+            var expiringValue = new ExpiringValue(value, DateTimeOffset.UtcNow + Ttl);
             _cache.AddOrUpdate(key, expiringValue, (_, __) => expiringValue);
         }
 
@@ -54,12 +56,13 @@ namespace DotCached.Core
         {
             public CacheValue()
             {
-                WriterSemaphore = new SemaphoreSlim(1,1);
+                WriterSemaphore = new SemaphoreSlim(1, 1);
             }
-            public SemaphoreSlim WriterSemaphore { get; private set; }
+
+            public SemaphoreSlim WriterSemaphore { get; }
         }
-        
-        internal class ExpiringValue<TValue> : CacheValue
+
+        internal class ExpiringValue : CacheValue
         {
             public ExpiringValue(TValue value, DateTimeOffset expiration)
             {
