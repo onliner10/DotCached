@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using DotCached.Core.Infrastructure;
 using FluentAssertions;
 using Moq;
 using Xunit;
@@ -64,14 +63,15 @@ namespace DotCached.Core.UnitTests
             var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
-            results.Distinct().Should().BeEquivalentTo(new string[] { null });
+            results.Distinct().Should().BeEquivalentTo(new string[] {null});
         }
-        
+
         [Theory]
         [MemberData(nameof(ThreadCounts))]
         public void GetOrNull_ValueFactoryThrowsException_AllThreadsReturnNull_2(int threadCount)
         {
             var callCounter = 0;
+
             DateTimeOffset DummyProvider()
             {
                 var res = DateTimeOffset.UnixEpoch.Add(callCounter * TimeSpan.FromMinutes(1));
@@ -79,37 +79,18 @@ namespace DotCached.Core.UnitTests
                 return res;
             }
 
-            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object, DummyProvider);
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object,
+                DummyProvider);
             _dummyValueFactory
                 .SetupSequence(x => x.Get(DummyKey))
                 .ReturnsAsync(DummyKey)
-                .ThrowsAsync(new Exception()) ;
-            
+                .ThrowsAsync(new Exception());
+
             StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
             var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
-            results.Distinct().Should().BeEquivalentTo(new string[] { null });
-        }
-        
-        [Fact]
-        public async Task GetOrNull_KeyNotPresentInCache_ValueFactoryGetsCalled()
-        {
-            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
-
-            var result = await cache.GetOrNull(DummyKey);
-            result.Should().Be(DummyKey);
-            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
-        }
-
-        [Fact]
-        public async Task GetOrNull_ValueHasExpired_NewValueIsCreated()
-        {
-            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
-
-            var result = await cache.GetOrNull(DummyKey);
-            result.Should().Be(DummyKey);
-            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
+            results.Distinct().Should().BeEquivalentTo(new string[] {null});
         }
 
         private static ConcurrentBag<TOut> StartThreads<TOut>(
@@ -134,6 +115,26 @@ namespace DotCached.Core.UnitTests
             foreach (var thread in threads) thread.Join();
 
             return results;
+        }
+
+        [Fact]
+        public async Task GetOrNull_KeyNotPresentInCache_ValueFactoryGetsCalled()
+        {
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
+
+            var result = await cache.GetOrNull(DummyKey);
+            result.Should().Be(DummyKey);
+            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
+        }
+
+        [Fact]
+        public async Task GetOrNull_ValueHasExpired_NewValueIsCreated()
+        {
+            var cache = new LazyTtlCache<string, string>(TimeSpan.FromMinutes(1), _dummyValueFactory.Object);
+
+            var result = await cache.GetOrNull(DummyKey);
+            result.Should().Be(DummyKey);
+            _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
         }
     }
 }

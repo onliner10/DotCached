@@ -4,22 +4,27 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using DotCached.Core.Infrastructure;
+using DotCached.Core.Logging;
 
 [assembly: InternalsVisibleTo("DotCached.Core.UnitTests")]
+
 namespace DotCached.Core
 {
     public class LazyTtlCache<TKey, TValue>
         where TValue : class
     {
+        private static readonly ILog Logger = LogProvider.For<LazyTtlCache<TKey, TValue>>();
+
         private readonly ConcurrentDictionary<TKey, ExpiringValue> _cache =
             new ConcurrentDictionary<TKey, ExpiringValue>();
 
-        private readonly IValueFactory<TKey, TValue> _valueFactory;
         private readonly TimeProvider _timeProvider;
+
+        private readonly IValueFactory<TKey, TValue> _valueFactory;
         public readonly TimeSpan Ttl;
 
         public LazyTtlCache(TimeSpan ttl, IValueFactory<TKey, TValue> valueFactory)
-        :this(ttl, valueFactory, TimeProviders.Default)
+            : this(ttl, valueFactory, TimeProviders.Default)
         {
         }
 
@@ -29,7 +34,7 @@ namespace DotCached.Core
             _valueFactory = valueFactory;
             _timeProvider = timeProvider;
         }
-        
+
         public async Task<TValue> GetOrNull(TKey key)
         {
             var expiringValue = _cache.GetOrAdd(key, k => new ExpiringValue(null, DateTimeOffset.MinValue));
@@ -40,12 +45,14 @@ namespace DotCached.Core
             {
                 if (_cache[key].Expiration <= _timeProvider())
                 {
+                    Logger.DebugFormat("Value for key {key} is stale (expired [{expiration}]), refreshing..", key,
+                        _cache[key].Expiration);
                     Set(key, await _valueFactory.Get(key));
                 }
             }
             catch (Exception ex)
             {
-                //TODO: parametrize this strategy    
+                Logger.ErrorException($"Exception while refreshing value for key {key}", ex);
                 Set(key, null);
             }
             finally
