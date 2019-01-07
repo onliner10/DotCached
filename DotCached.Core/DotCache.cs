@@ -3,6 +3,7 @@ using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
+using DotCached.Core.Helpers;
 using DotCached.Core.Infrastructure;
 using DotCached.Core.Logging;
 
@@ -18,6 +19,7 @@ namespace DotCached.Core
         private readonly ConcurrentDictionary<TKey, WriteableCacheValue<TValue>> _cache =
             new ConcurrentDictionary<TKey, WriteableCacheValue<TValue>>();
 
+
         private readonly IInvalidationStrategy<TValue> _invalidationStrategy;
 
         private readonly TimeProvider _timeProvider;
@@ -25,19 +27,23 @@ namespace DotCached.Core
         private readonly IValueFactory<TKey, TValue> _valueFactory;
 
         public DotCache(IValueFactory<TKey, TValue> valueFactory, IInvalidationStrategy<TValue> invalidationStrategy)
-            : this(valueFactory, invalidationStrategy, TimeProviders.Default)
+            : this(valueFactory, invalidationStrategy, true, TimeProviders.Default)
         {
         }
 
         internal DotCache(IValueFactory<TKey, TValue> valueFactory, IInvalidationStrategy<TValue> invalidationStrategy,
-            TimeProvider timeProvider)
+            bool allowStale, TimeProvider timeProvider)
         {
+            AllowStale = allowStale;
             _valueFactory = valueFactory;
             _invalidationStrategy = invalidationStrategy;
             _timeProvider = timeProvider;
         }
 
-        public async Task<TValue> GetOrNull(TKey key)
+        public int Count => _cache.Count;
+        public bool AllowStale { get; }
+
+        public virtual async Task<TValue> GetOrNull(TKey key)
         {
             var expiringValue =
                 _cache.GetOrAdd(key, k => new WriteableCacheValue<TValue>(null, DateTimeOffset.MinValue));
@@ -47,7 +53,7 @@ namespace DotCached.Core
             await expiringValue.WriterSemaphore.WaitAsync();
             try
             {
-                var currentValue = _cache[key];
+                var currentValue = _cache.GetOrAdd(key, k => new WriteableCacheValue<TValue>(null, DateTimeOffset.MinValue));
                 if (currentValue.Value == null ||
                     _invalidationStrategy.ShouldInvalidate(currentValue))
                 {
@@ -58,33 +64,30 @@ namespace DotCached.Core
             catch (Exception ex)
             {
                 Logger.ErrorException($"Exception while refreshing value for key {key}", ex);
-                Set(key, null);
+                if (!AllowStale || _cache.TryGet(key)?.Value == null)
+                {
+                    Remove(key);
+                }
             }
             finally
             {
                 expiringValue.WriterSemaphore.Release();
             }
 
-            return _cache[key].Value;
+            return _cache.TryGet(key)?.Value;
         }
 
-        public void Set(TKey key, TValue value)
+
+        public virtual void Set(TKey key, TValue value)
         {
             var expiringValue = new WriteableCacheValue<TValue>(value, _timeProvider());
             _cache.AddOrUpdate(key, expiringValue, (_, __) => expiringValue);
         }
-    }
 
-    public class CacheValue<TValue>
-    {
-        public CacheValue(TValue value, DateTimeOffset created)
+        public virtual void Remove(TKey key)
         {
-            Value = value;
-            Created = created;
+            _cache.TryRemove(key, out _);
         }
-
-        public TValue Value { get; }
-        public DateTimeOffset Created { get; }
     }
 
     internal class WriteableCacheValue<TValue> : CacheValue<TValue>
@@ -96,10 +99,5 @@ namespace DotCached.Core
         }
 
         public SemaphoreSlim WriterSemaphore { get; }
-    }
-
-    public interface IInvalidationStrategy<TValue>
-    {
-        bool ShouldInvalidate(CacheValue<TValue> expiringValue);
     }
 }
