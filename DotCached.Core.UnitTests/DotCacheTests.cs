@@ -54,9 +54,9 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(false);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
 
-            var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
+            var results = StartThreads(threadCount, () => cache.GetOrNullAsync(DummyKey).Result);
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
         }
 
@@ -68,13 +68,13 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(false);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
             var value = Guid.NewGuid().ToString();
             _dummyValueFactory
                 .Setup(x => x.Get(DummyKey))
                 .ReturnsAsync(value);
 
-            var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
+            var results = StartThreads(threadCount, () => cache.GetOrNullAsync(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
             results.Distinct().Should().BeEquivalentTo(value);
@@ -88,12 +88,12 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(true);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
             _dummyValueFactory
                 .Setup(x => x.Get(DummyKey))
                 .ThrowsAsync(new Exception());
 
-            var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
+            var results = StartThreads(threadCount, () => cache.GetOrNullAsync(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
             
@@ -109,14 +109,14 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(true);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object,invalidationStrategyMock.Object, allowStale, TimeProviders.Default);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object,invalidationStrategyMock.Object, allowStale, TimeProviders.Default);
             _dummyValueFactory
                 .SetupSequence(x => x.Get(DummyKey))
                 .ReturnsAsync(DummyKey)
                 .ThrowsAsync(new Exception());
 
-            StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
-            var results = StartThreads(threadCount, () => cache.GetOrNull(DummyKey).Result);
+            StartThreads(threadCount, () => cache.GetOrNullAsync(DummyKey).Result);
+            var results = StartThreads(threadCount, () => cache.GetOrNullAsync(DummyKey).Result);
 
             results.Count().Should().Be(threadCount);
 
@@ -158,9 +158,9 @@ namespace DotCached.Core.UnitTests
         public async Task GetOrNull_KeyNotPresentInCache_ValueFactoryGetsCalled()
         {
             var invalidationStrategyMock = new Mock<IInvalidationStrategy<string>>();
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
 
-            var result = await cache.GetOrNull(DummyKey);
+            var result = await cache.GetOrNullAsync(DummyKey);
             result.Should().Be(DummyKey);
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
         }
@@ -172,11 +172,11 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(false);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
             cache.Set(DummyKey, DummyKey);
 
             cache.Count.Should().Be(1);
-            (await cache.GetOrNull(DummyKey)).Should().Be(DummyKey);
+            (await cache.GetOrNullAsync(DummyKey)).Should().Be(DummyKey);
         }
 
         [Fact]
@@ -186,11 +186,11 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(true);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
 
             cache.Set(DummyKey, DummyKey);
 
-            var result = await cache.GetOrNull(DummyKey);
+            var result = await cache.GetOrNullAsync(DummyKey);
 
             result.Should().Be(DummyKey);
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Once);
@@ -203,12 +203,12 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(false);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
 
             cache.Set(DummyKey, DummyKey);
 
             // simulate it's stale by now
-            var result = await cache.GetOrNull(DummyKey);
+            var result = await cache.GetOrNullAsync(DummyKey);
 
             result.Should().Be(DummyKey);
             _dummyValueFactory.Verify(vf => vf.Get(DummyKey), Times.Never);
@@ -221,7 +221,7 @@ namespace DotCached.Core.UnitTests
             invalidationStrategyMock
                 .Setup(x => x.ShouldInvalidate(It.IsAny<CacheValue<string>>())).Returns(false);
 
-            var cache = new DotCache<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
+            var cache = new LazyValueProvider<string, string>(_dummyValueFactory.Object, invalidationStrategyMock.Object);
             cache.Set(DummyKey, DummyKey);
             cache.Remove(DummyKey);
 
